@@ -12,6 +12,7 @@
 #include <WebServer.h>
 #include <WiFi.h>
 
+#include <ctime>
 #include <cstdio>
 #include <cstring>
 
@@ -71,6 +72,7 @@ nav button.on { background:var(--card); border-color:var(--line); }
 .muted { color:var(--muted); font-size:.92rem; }
 .warn { background:var(--warn-bg); color:var(--warn); padding:10px 12px; border-radius:10px; }
 .err { color:var(--err); min-height:1.2em; }
+.log { white-space:pre-wrap; word-break:break-word; max-height:420px; overflow:auto; margin:0 0 10px; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--bg); font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; }
 .checks { display:flex; flex-direction:column; gap:8px; margin:12px 0; }
 .fixo { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
 @media (max-width:560px) { .grid, .fixo { grid-template-columns:1fr; } }
@@ -122,6 +124,8 @@ nav button.on { background:var(--card); border-color:var(--line); }
 <button type="button" data-aba="inversor">Inversor</button>
 <button type="button" data-aba="rede">Rede</button>
 <button type="button" data-aba="mqtt">MQTT</button>
+<button type="button" data-aba="ntp">NTP</button>
+<button type="button" data-aba="logs">Logs</button>
 <button type="button" data-aba="usuario">Usuário</button>
 </nav>
 <section id="estatistica">
@@ -180,7 +184,7 @@ nav button.on { background:var(--card); border-color:var(--line); }
 <p class="muted">WebSocket: ws:// e wss://. A primeira pasta é o caminho do socket e o resto é o tópico. Ex.: ws://usuario:senha@192.168.1.10:8083/mqtt/fabbricadev/inversor</p>
 <label for="mqtt_every">Intervalo (segundos)</label>
 <input id="mqtt_every" type="number" min="1" max="3600" value="10">
-<p class="muted">De 1 a 3600. A placa publica o JSON do inversor nesse intervalo.</p>
+<p class="muted">De 1 a 3600. A placa publica o JSON do inversor nesse intervalo. Em mqtts:// e wss:// o certificado é conferido nas autoridades públicas.</p>
 <p class="muted" id="mqttinfo"></p>
 <p class="err" id="merr"></p>
 <button type="submit">Salvar MQTT</button>
@@ -199,7 +203,7 @@ nav button.on { background:var(--card); border-color:var(--line); }
 <button type="submit">Trocar senha</button>
 </form>
 <div class="card">
-<p>Restaura o usuário e a senha para admin, apaga a rede e o MQTT, volta o nome para fabbricadev-datalogger e o modelo para Sungrow SG6K-D.</p>
+<p>Restaura o usuário e a senha para admin, apaga a rede e o MQTT, volta o nome para fabbricadev-datalogger, o modelo para Sungrow SG6K-D e o relógio para São Paulo (GMT−3).</p>
 <button class="perigo" type="button" id="resetabrir">Restaurar padrão</button>
 <form id="freset" hidden>
 <label for="resetsenha">Senha atual</label>
@@ -212,6 +216,33 @@ nav button.on { background:var(--card); border-color:var(--line); }
 <button class="sec" type="button" id="resetcancelar">Cancelar</button>
 </div>
 </form>
+</div>
+</section>
+<section id="ntp" hidden>
+<form id="fntp" class="card">
+<label for="ntp_servidor">Servidor NTP</label>
+<input id="ntp_servidor" type="text" maxlength="63" spellcheck="false" autocomplete="off" value="a.st1.ntp.br">
+<p class="muted">Padrão brasileiro a.st1.ntp.br. Há reserva em b.st1.ntp.br e pool.ntp.br.</p>
+<label for="ntp_gmt">Fuso em relação ao GMT</label>
+<input id="ntp_gmt" type="number" min="-12" max="14" value="-3">
+<p class="muted">São Paulo fica em GMT−3, sem horário de verão.</p>
+<p class="muted" id="ntpinfo"></p>
+<p class="err" id="nerr"></p>
+<button type="submit">Salvar NTP</button>
+</form>
+</section>
+<section id="logs" hidden>
+<div class="card">
+<p class="muted">O mesmo texto da USB e do telnet. Atualiza sozinho enquanto esta aba está aberta.</p>
+<div class="row" style="flex-wrap:wrap;margin-bottom:10px">
+<label for="loglinhas" style="margin:0">Linhas</label>
+<input id="loglinhas" type="number" min="10" max="400" value="80" style="width:90px">
+<button class="sec" type="button" id="logatualizar">Atualizar</button>
+<button class="sec" type="button" id="loglimpar">Limpar</button>
+<button class="sec" type="button" id="logcopiar">Copiar</button>
+</div>
+<pre id="logbox" class="log">Carregando…</pre>
+<p class="muted" id="logaviso"></p>
 </div>
 </section>
 </div>
@@ -243,16 +274,103 @@ const CAMPOS = [
   ['potencia_nominal_kw','Potência nominal','kW'],
   ['tipo','Código do tipo','']
 ];
+let logTimer = 0;
+let ntpTimer = 0;
+let logBruto = '';
+let logMarca = '';
+function linhasPedidas(gravar) {
+  let n = parseInt(document.getElementById('loglinhas').value, 10);
+  if (!n || n < 10) n = 10;
+  if (n > 400) n = 400;
+  if (gravar) document.getElementById('loglinhas').value = n;
+  return n;
+}
+function mostrarLogs() {
+  const box = document.getElementById('logbox');
+  let t = logBruto || '';
+  if (logMarca) {
+    const i = t.lastIndexOf(logMarca);
+    t = i < 0 ? '' : t.slice(i + logMarca.length);
+  }
+  t = t.replace(/^\n+/, '').replace(/\n+$/, '');
+  const linhas = t ? t.split('\n') : [];
+  const visivel = linhas.slice(-linhasPedidas()).join('\n') || (logMarca ? '' : 'Sem registros ainda.');
+  const perto = box.scrollHeight - box.scrollTop - box.clientHeight < 48;
+  if (box.textContent !== visivel) box.textContent = visivel;
+  if (perto) box.scrollTop = box.scrollHeight;
+}
+async function carregarLogs() {
+  const r = await fetch('/api/logs');
+  if (r.status === 401) { location.reload(); return; }
+  logBruto = await r.text();
+  mostrarLogs();
+}
+function limparLogs() {
+  logMarca = (logBruto || '').slice(-160);
+  document.getElementById('logaviso').textContent = '';
+  mostrarLogs();
+}
+function copiarLogs() {
+  const aviso = document.getElementById('logaviso');
+  const box = document.getElementById('logbox');
+  const texto = box.textContent || '';
+  const marcar = () => {
+    const range = document.createRange();
+    range.selectNodeContents(box);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+  };
+  const legado = () => {
+    marcar();
+    try { return document.execCommand('copy'); } catch (e) { return false; }
+  };
+  const falhou = () => {
+    marcar();
+    aviso.textContent = 'Texto selecionado. Use copiar do navegador.';
+  };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(texto).then(() => {
+      aviso.textContent = 'Texto copiado.';
+    }).catch(falhou);
+    return;
+  }
+  aviso.textContent = legado() ? 'Texto copiado.' : '';
+  if (!aviso.textContent) falhou();
+}
 function aba(id) {
   document.querySelectorAll('nav button').forEach(b => b.classList.toggle('on', b.dataset.aba === id));
-  ['estatistica','inversor','rede','mqtt','usuario'].forEach(n => {
+  ['estatistica','inversor','rede','mqtt','ntp','usuario','logs'].forEach(n => {
     document.getElementById(n).hidden = n !== id;
   });
   if (id === 'inversor') carregarModelo();
   if (id === 'rede') carregarRede();
   if (id === 'mqtt') carregarMqtt();
+  if (id === 'ntp') {
+    carregarNtp();
+    if (!ntpTimer) ntpTimer = setInterval(carregarNtp, 5000);
+  } else if (ntpTimer) {
+    clearInterval(ntpTimer);
+    ntpTimer = 0;
+  }
+  if (id === 'logs') {
+    carregarLogs();
+    if (!logTimer) logTimer = setInterval(carregarLogs, 2000);
+  } else if (logTimer) {
+    clearInterval(logTimer);
+    logTimer = 0;
+  }
 }
 document.querySelectorAll('nav button').forEach(b => b.onclick = () => aba(b.dataset.aba));
+const linhasSalvas = parseInt(localStorage.getItem('loglinhas') || '80', 10);
+document.getElementById('loglinhas').value = (linhasSalvas >= 10 && linhasSalvas <= 400) ? linhasSalvas : 80;
+document.getElementById('loglinhas').onchange = () => {
+  localStorage.setItem('loglinhas', String(linhasPedidas(true)));
+  mostrarLogs();
+};
+document.getElementById('logatualizar').onclick = carregarLogs;
+document.getElementById('loglimpar').onclick = limparLogs;
+document.getElementById('logcopiar').onclick = copiarLogs;
 async function post(url, dados) {
   const r = await fetch(url, {method:'POST', body:new URLSearchParams(dados)});
   const j = await r.json().catch(() => ({}));
@@ -393,6 +511,29 @@ document.getElementById('fmqtt').onsubmit = async (ev) => {
     document.getElementById('merr').textContent = 'MQTT salvo.';
     setTimeout(carregarMqtt, 2000);
   } catch (e) { document.getElementById('merr').textContent = e.message; }
+};
+async function carregarNtp() {
+  const r = await fetch('/api/ntp');
+  if (r.status === 401) { location.reload(); return; }
+  const j = await r.json();
+  const servidor = document.getElementById('ntp_servidor');
+  const gmt = document.getElementById('ntp_gmt');
+  if (document.activeElement !== servidor) servidor.value = j.servidor || 'a.st1.ntp.br';
+  if (document.activeElement !== gmt) gmt.value = j.gmt === undefined ? -3 : j.gmt;
+  const lugar = Number(j.gmt) === -3 ? 'São Paulo' : 'GMT' + (Number(j.gmt) > 0 ? '+' : '') + j.gmt;
+  document.getElementById('ntpinfo').textContent = j.sincronizado ? (lugar + ' · ' + j.horario) : 'Aguardando o horário da internet';
+}
+document.getElementById('fntp').onsubmit = async (ev) => {
+  ev.preventDefault();
+  document.getElementById('nerr').textContent = '';
+  try {
+    await post('/api/ntp', {
+      servidor: document.getElementById('ntp_servidor').value,
+      gmt: document.getElementById('ntp_gmt').value
+    });
+    document.getElementById('nerr').textContent = 'NTP salvo.';
+    carregarNtp();
+  } catch (e) { document.getElementById('nerr').textContent = e.message; }
 };
 document.getElementById('fmodelo').onsubmit = async (ev) => {
   ev.preventDefault();
@@ -697,11 +838,10 @@ void handle_mqtt_get() {
   char topic[120];
   json_escape(cfg.mqtt_url, url, sizeof(url));
   json_escape(mqtt_topic(), topic, sizeof(topic));
-  char body[640];
+  char body[800];
   snprintf(body, sizeof(body),
            "{\"habilitado\":%s,\"url\":\"%s\",\"intervalo\":%u,\"conectado\":%s,\"topico\":\"%s\"}",
-           cfg.mqtt_on ? "true" : "false", url, cfg.mqtt_every_s, mqtt_connected() ? "true" : "false",
-           topic);
+           cfg.mqtt_on ? "true" : "false", url, cfg.mqtt_every_s, mqtt_connected() ? "true" : "false", topic);
   send_json(200, body);
 }
 
@@ -742,6 +882,89 @@ void handle_mqtt_post() {
   logger_printf("MQTT %s\r\n", enabled ? "habilitado" : "desabilitado");
   mqtt_reconfigure();
   send_json(200, "{\"ok\":true}");
+}
+
+bool parse_gmt(const String &text, int *out) {
+  if (text.length() < 1 || text.length() > 3) {
+    return false;
+  }
+  int sign = 1;
+  unsigned i = 0;
+  if (text[0] == '-') {
+    sign = -1;
+    i = 1;
+  } else if (text[0] == '+') {
+    i = 1;
+  }
+  if (i >= text.length()) {
+    return false;
+  }
+  int value = 0;
+  for (; i < text.length(); ++i) {
+    char c = text[i];
+    if (c < '0' || c > '9') {
+      return false;
+    }
+    value = value * 10 + (c - '0');
+  }
+  value *= sign;
+  if (value < -12 || value > 14) {
+    return false;
+  }
+  *out = value;
+  return true;
+}
+
+void handle_ntp_get() {
+  if (!require_auth()) {
+    return;
+  }
+  const Settings &cfg = settings_get();
+  char server[140];
+  json_escape(cfg.ntp_server, server, sizeof(server));
+  time_t now = time(nullptr);
+  struct tm parts {};
+  char hora[40];
+  hora[0] = '\0';
+  bool synced = now >= 1767225600 && localtime_r(&now, &parts) != nullptr;
+  if (synced) {
+    strftime(hora, sizeof(hora), "%d/%m/%Y %H:%M:%S", &parts);
+  }
+  char body[280];
+  snprintf(body, sizeof(body), "{\"servidor\":\"%s\",\"gmt\":%d,\"horario\":\"%s\",\"sincronizado\":%s}",
+           server, cfg.ntp_gmt, hora, synced ? "true" : "false");
+  send_json(200, body);
+}
+
+void handle_ntp_post() {
+  if (!require_auth()) {
+    return;
+  }
+  int gmt = 0;
+  if (!parse_gmt(field("gmt"), &gmt)) {
+    send_json(400, "{\"erro\":\"Fuso de -12 a 14\"}");
+    return;
+  }
+  const char *err = settings_save_ntp(field("servidor").c_str(), gmt);
+  if (err != nullptr) {
+    char escaped[80];
+    char body[120];
+    json_escape(err, escaped, sizeof(escaped));
+    snprintf(body, sizeof(body), "{\"erro\":\"%s\"}", escaped);
+    send_json(400, body);
+    return;
+  }
+  net_apply_clock();
+  send_json(200, "{\"ok\":true}");
+}
+
+void handle_logs() {
+  if (!require_auth()) {
+    return;
+  }
+  static char buf[6144];
+  logger_copy(buf, sizeof(buf));
+  g_server.send(200, "text/plain; charset=utf-8", buf);
 }
 
 void handle_model_get() {
@@ -832,6 +1055,7 @@ void handle_factory_reset() {
   g_server.sendHeader("Set-Cookie", "casa=; Path=/; Max-Age=0");
   inverter_data_clear();
   mqtt_reconfigure();
+  net_apply_clock();
   logger_printf("Configuracao restaurada. Login admin / admin\r\n");
   send_json(200, "{\"ok\":true}");
   net_request_apply();
@@ -917,6 +1141,9 @@ void web_begin() {
   g_server.on("/api/modelo", HTTP_POST, handle_model_post);
   g_server.on("/api/mqtt", HTTP_GET, handle_mqtt_get);
   g_server.on("/api/mqtt", HTTP_POST, handle_mqtt_post);
+  g_server.on("/api/ntp", HTTP_GET, handle_ntp_get);
+  g_server.on("/api/ntp", HTTP_POST, handle_ntp_post);
+  g_server.on("/api/logs", HTTP_GET, handle_logs);
   g_server.on("/api/senha", HTTP_POST, handle_password);
   g_server.on("/api/reset", HTTP_POST, handle_factory_reset);
   g_server.on("/api/scan", HTTP_GET, handle_scan);

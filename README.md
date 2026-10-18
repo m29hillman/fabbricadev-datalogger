@@ -31,7 +31,7 @@ Cinco senhas erradas seguidas bloqueiam o login por 5 minutos. O comando `reseta
 
 ## Página e MQTT
 
-A aba Estatística mostra potência, energia, tensões e correntes lidas do mapa Sungrow (protocolo de string inverters). O mesmo conteúdo sai no MQTT, com a mensagem retida, no tópico `fabbricadev/inversor` se a URL não tiver caminho. O intervalo fica na aba MQTT e o padrão é 10 segundos.
+A aba Estatística mostra potência, energia, tensões e correntes lidas do mapa Sungrow (protocolo de string inverters). O mesmo conteúdo sai no MQTT, com a mensagem retida, no tópico `fabbricadev/inversor` se a URL não tiver caminho. O intervalo fica na aba MQTT e o padrão é 10 segundos. A aba NTP busca o horário na internet. O padrão é o servidor brasileiro `a.st1.ntp.br` no fuso de São Paulo, GMT−3. A aba Logs mostra o texto recente da USB e do telnet, com limite de linhas, limpar e copiar.
 
 Formato da URL:
 
@@ -42,7 +42,7 @@ ws://usuario:senha@192.168.1.10:8083/mqtt/fabbricadev/inversor
 wss://usuario:senha@broker.exemplo:443/mqtt/fabbricadev/inversor
 ```
 
-`mqtt://` usa a porta 1883 e `mqtts://` a 8883. O caminho depois do host é o tópico. `ws://` usa a porta 80 e `wss://` a 443. Nessas duas, a primeira pasta é o caminho do WebSocket (em geral `mqtt`) e o restante é o tópico. Usuário e senha são opcionais.
+`mqtt://` usa a porta 1883 e `mqtts://` a 8883. O caminho depois do host é o tópico. `ws://` usa a porta 80 e `wss://` a 443. Nessas duas, a primeira pasta é o caminho do WebSocket (em geral `mqtt`) e o restante é o tópico. Usuário e senha são opcionais. Em `mqtts://` e `wss://` a placa confere o certificado nas autoridades públicas, depois de acertar o relógio pela internet.
 
 Exemplo do JSON:
 

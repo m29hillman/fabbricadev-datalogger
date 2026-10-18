@@ -182,6 +182,13 @@ void net_begin() {
 
 void net_request_apply() { g_apply_pending = true; }
 
+void net_apply_clock() {
+  const Settings &cfg = settings_get();
+  const char *server = cfg.ntp_server[0] != '\0' ? cfg.ntp_server : NTP_SERVER_DEFAULT;
+  configTime(static_cast<long>(cfg.ntp_gmt) * 3600L, 0, server, "b.st1.ntp.br", "pool.ntp.br");
+  logger_printf("NTP %s fuso GMT%+d\r\n", server, cfg.ntp_gmt);
+}
+
 void net_service() {
   kick_finish();
   if (g_apply_pending) {
@@ -212,6 +219,7 @@ void net_service() {
         MDNS.addService("http", "tcp", WEB_PORT);
         MDNS.addService("telnet", "tcp", TELNET_PORT);
       }
+      net_apply_clock();
       logger_printf("Wi-Fi %s conectado  ip %s  rssi %d dBm\r\n", WiFi.SSID().c_str(),
                     WiFi.localIP().toString().c_str(), WiFi.RSSI());
       logger_printf("Pagina tambem em http://%s/ e http://%s.local/\r\n",

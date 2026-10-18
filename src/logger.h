@@ -8,3 +8,4 @@ void logger_printf(const char *fmt, ...);
 void logger_hexdump(const char *title, const uint8_t *data, size_t len);
 void logger_service();
 bool logger_take_command(char *dest, size_t dest_len);
+size_t logger_copy(char *dest, size_t dest_len);

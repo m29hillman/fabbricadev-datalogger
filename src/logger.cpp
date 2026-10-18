@@ -257,6 +257,53 @@ void logger_service() {
   }
 }
 
+size_t logger_copy(char *dest, size_t dest_len) {
+  if (dest == nullptr || dest_len < 2) {
+    return 0;
+  }
+  const char *older = nullptr;
+  size_t older_n = 0;
+  const char *newer = nullptr;
+  size_t newer_n = 0;
+  if (!g_back_full) {
+    newer = g_backlog;
+    newer_n = g_back_pos;
+  } else {
+    older = g_backlog + g_back_pos;
+    older_n = kBacklog - g_back_pos;
+    newer = g_backlog;
+    newer_n = g_back_pos;
+  }
+  size_t total = older_n + newer_n;
+  size_t skip = total > dest_len - 1 ? total - (dest_len - 1) : 0;
+  size_t n = 0;
+  const char *parts[2] = {older, newer};
+  size_t counts[2] = {older_n, newer_n};
+  for (int part = 0; part < 2; ++part) {
+    const char *text = parts[part];
+    size_t len = counts[part];
+    if (text == nullptr || len == 0) {
+      continue;
+    }
+    size_t i = 0;
+    if (skip >= len) {
+      skip -= len;
+      continue;
+    }
+    i = skip;
+    skip = 0;
+    for (; i < len && n + 1 < dest_len; ++i) {
+      char c = text[i];
+      if (c == '\r') {
+        continue;
+      }
+      dest[n++] = c;
+    }
+  }
+  dest[n] = '\0';
+  return n;
+}
+
 bool logger_take_command(char *dest, size_t dest_len) {
   if (g_q_count == 0 || dest_len == 0) {
     return false;

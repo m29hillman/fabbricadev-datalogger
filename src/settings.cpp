@@ -50,6 +50,8 @@ void persist() {
   g_prefs.putBool("mqtt_on", g_settings.mqtt_on);
   g_prefs.putString("mqtt_url", g_settings.mqtt_url);
   g_prefs.putUShort("mqtt_s", g_settings.mqtt_every_s);
+  g_prefs.putString("ntp", g_settings.ntp_server);
+  g_prefs.putChar("ntp_gmt", g_settings.ntp_gmt);
   g_prefs.putString("modelo", g_settings.modelo);
 }
 
@@ -62,6 +64,8 @@ void settings_begin() {
   clip(g_settings.modelo, sizeof(g_settings.modelo), "sungrow-sg6k-d");
   clip(g_settings.hostname, sizeof(g_settings.hostname), WIFI_HOSTNAME);
   g_settings.mqtt_every_s = MQTT_PUBLISH_DEFAULT_S;
+  clip(g_settings.ntp_server, sizeof(g_settings.ntp_server), NTP_SERVER_DEFAULT);
+  g_settings.ntp_gmt = NTP_GMT_DEFAULT;
   g_settings.dhcp = true;
 
   g_ready = g_prefs.begin("casa", false);
@@ -114,6 +118,14 @@ void settings_begin() {
   g_settings.mqtt_every_s = g_prefs.getUShort("mqtt_s", MQTT_PUBLISH_DEFAULT_S);
   if (g_settings.mqtt_every_s < 1 || g_settings.mqtt_every_s > 3600) {
     g_settings.mqtt_every_s = MQTT_PUBLISH_DEFAULT_S;
+  }
+  load_string("ntp", g_settings.ntp_server, sizeof(g_settings.ntp_server), NTP_SERVER_DEFAULT);
+  if (g_settings.ntp_server[0] == '\0') {
+    clip(g_settings.ntp_server, sizeof(g_settings.ntp_server), NTP_SERVER_DEFAULT);
+  }
+  g_settings.ntp_gmt = g_prefs.getChar("ntp_gmt", NTP_GMT_DEFAULT);
+  if (g_settings.ntp_gmt < -12 || g_settings.ntp_gmt > 14) {
+    g_settings.ntp_gmt = NTP_GMT_DEFAULT;
   }
   load_string("modelo", g_settings.modelo, sizeof(g_settings.modelo), "sungrow-sg6k-d");
   if (inverter_model_find(g_settings.modelo) == nullptr) {
@@ -217,6 +229,30 @@ const char *settings_save_mqtt(bool enabled, const char *url, uint16_t every_s) 
   return nullptr;
 }
 
+const char *settings_save_ntp(const char *server, int gmt) {
+  if (server == nullptr) {
+    server = "";
+  }
+  size_t n = strlen(server);
+  if (n < 1 || n >= sizeof(g_settings.ntp_server)) {
+    return "Servidor NTP invalido";
+  }
+  for (size_t i = 0; i < n; ++i) {
+    char c = server[i];
+    bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '.' || c == '-';
+    if (!ok || (i == 0 && (c == '.' || c == '-')) || (i + 1 == n && (c == '.' || c == '-'))) {
+      return "Servidor NTP invalido";
+    }
+  }
+  if (gmt < -12 || gmt > 14) {
+    return "Fuso de -12 a 14";
+  }
+  clip(g_settings.ntp_server, sizeof(g_settings.ntp_server), server);
+  g_settings.ntp_gmt = static_cast<int8_t>(gmt);
+  persist();
+  return nullptr;
+}
+
 const char *settings_save_model(const char *id) {
   if (inverter_model_find(id) == nullptr) {
     return "Modelo desconhecido";
@@ -260,6 +296,8 @@ const char *settings_factory_reset(const char *senha) {
   g_settings.mqtt_on = false;
   g_settings.mqtt_url[0] = '\0';
   g_settings.mqtt_every_s = MQTT_PUBLISH_DEFAULT_S;
+  clip(g_settings.ntp_server, sizeof(g_settings.ntp_server), NTP_SERVER_DEFAULT);
+  g_settings.ntp_gmt = NTP_GMT_DEFAULT;
   clip(g_settings.hostname, sizeof(g_settings.hostname), WIFI_HOSTNAME);
   clip(g_settings.modelo, sizeof(g_settings.modelo), "sungrow-sg6k-d");
   persist();

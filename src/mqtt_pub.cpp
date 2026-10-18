@@ -8,9 +8,12 @@
 
 #include <mqtt_client.h>
 
+#include <ctime>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+extern "C" esp_err_t esp_crt_bundle_attach(void *conf);
 
 extern "C" esp_err_t mqtt_on_event(esp_mqtt_event_handle_t event);
 
@@ -43,8 +46,16 @@ Parsed g_parsed;
 bool g_parsed_ok = false;
 bool g_was_up = false;
 volatile bool g_mqtt_up = false;
+volatile bool g_err_pending = false;
+volatile int g_err_type = 0;
+volatile int g_tls_esp = 0;
+volatile int g_tls_stack = 0;
+volatile int g_tls_flags = 0;
+volatile int g_refused = 0;
+volatile int g_sock = 0;
 uint32_t g_last_try_ms = 0;
 uint32_t g_last_pub_ms = 0;
+uint32_t g_clock_log_ms = 0;
 
 void clip(char *dst, size_t n, const char *src) {
   strncpy(dst, src, n - 1);
@@ -93,6 +104,53 @@ bool take_scheme(const char *&p, Transport *transport, uint16_t *port) {
 
 bool websocket(Transport transport) {
   return transport == Transport::kWs || transport == Transport::kWss;
+}
+
+bool tls_transport(Transport transport) {
+  return transport == Transport::kTls || transport == Transport::kWss;
+}
+
+bool clock_ready() {
+  return time(nullptr) >= 1767225600;
+}
+
+const char *refuse_text(int code) {
+  switch (code) {
+    case MQTT_CONNECTION_REFUSE_PROTOCOL:
+      return "protocolo recusado";
+    case MQTT_CONNECTION_REFUSE_ID_REJECTED:
+      return "identificador recusado";
+    case MQTT_CONNECTION_REFUSE_SERVER_UNAVAILABLE:
+      return "broker indisponivel";
+    case MQTT_CONNECTION_REFUSE_BAD_USERNAME:
+      return "usuario recusado";
+    case MQTT_CONNECTION_REFUSE_NOT_AUTHORIZED:
+      return "senha ou permissao recusada";
+    default:
+      return "motivo desconhecido";
+  }
+}
+
+void note_mqtt_error() {
+  if (!g_err_pending) {
+    return;
+  }
+  int type = g_err_type;
+  int tls_esp = g_tls_esp;
+  int stack = g_tls_stack;
+  int flags = g_tls_flags;
+  int refused = g_refused;
+  int sock = g_sock;
+  g_err_pending = false;
+  if (type == MQTT_ERROR_TYPE_CONNECTION_REFUSED) {
+    logger_printf("MQTT recusado pelo broker (%s)\r\n", refuse_text(refused));
+    return;
+  }
+  logger_printf("MQTT falha de transporte esp=%d pilha=%d certificado=%d socket=%d\r\n", tls_esp, stack,
+                flags, sock);
+  if (flags != 0 || (tls_esp == 32794 && (stack == 30592 || stack == -30592))) {
+    logger_printf("MQTT o servidor encerrou o TLS.\r\n");
+  }
 }
 
 const char *transport_name(Transport transport) {
@@ -265,7 +323,11 @@ void start_client() {
   cfg.out_buffer_size = 2048;
   cfg.task_stack = 10240;
   cfg.task_prio = 5;
-  cfg.skip_cert_common_name_check = true;
+  bool tls = tls_transport(g_parsed.transport);
+  cfg.skip_cert_common_name_check = false;
+  if (tls) {
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
+  }
   if (g_parsed.user[0] != '\0') {
     cfg.username = g_parsed.user;
     if (g_parsed.pass[0] != '\0') {
@@ -287,8 +349,14 @@ void start_client() {
     logger_printf("MQTT nao iniciou em %s:%u\r\n", g_parsed.host, g_parsed.port);
     return;
   }
-  logger_printf("MQTT conectando em %s:%u topico %s via %s\r\n", g_parsed.host, g_parsed.port,
-                g_parsed.topic, transport_name(g_parsed.transport));
+  const char *cert = tls ? " verificando certificado" : "";
+  if (websocket(g_parsed.transport)) {
+    logger_printf("MQTT conectando em %s:%u caminho %s topico %s via %s%s\r\n", g_parsed.host, g_parsed.port,
+                  g_parsed.ws_path, g_parsed.topic, transport_name(g_parsed.transport), cert);
+  } else {
+    logger_printf("MQTT conectando em %s:%u topico %s via %s%s\r\n", g_parsed.host, g_parsed.port, g_parsed.topic,
+                  transport_name(g_parsed.transport), cert);
+  }
 }
 
 void refresh_parse() {
@@ -308,6 +376,23 @@ extern "C" esp_err_t mqtt_on_event(esp_mqtt_event_handle_t event) {
     g_mqtt_up = true;
   } else if (event->event_id == MQTT_EVENT_DISCONNECTED) {
     g_mqtt_up = false;
+  } else if (event->event_id == MQTT_EVENT_ERROR) {
+    g_err_pending = false;
+    g_err_type = 0;
+    g_tls_esp = 0;
+    g_tls_stack = 0;
+    g_tls_flags = 0;
+    g_refused = 0;
+    g_sock = 0;
+    if (event->error_handle != nullptr) {
+      g_err_type = event->error_handle->error_type;
+      g_tls_esp = event->error_handle->esp_tls_last_esp_err;
+      g_tls_stack = event->error_handle->esp_tls_stack_err;
+      g_tls_flags = event->error_handle->esp_tls_cert_verify_flags;
+      g_refused = event->error_handle->connect_return_code;
+      g_sock = event->error_handle->esp_transport_sock_errno;
+    }
+    g_err_pending = true;
   }
   return ESP_OK;
 }
@@ -329,6 +414,7 @@ bool mqtt_connected() { return g_mqtt_up; }
 const char *mqtt_topic() { return g_parsed_ok ? g_parsed.topic : MQTT_TOPIC_DEFAULT; }
 
 void mqtt_service(bool allow_connect) {
+  note_mqtt_error();
   const Settings &cfg = settings_get();
   if (!cfg.mqtt_on) {
     if (g_client != nullptr) {
@@ -358,6 +444,13 @@ void mqtt_service(bool allow_connect) {
   }
 
   if (g_client != nullptr || !allow_connect || !net_sta_connected()) {
+    return;
+  }
+  if (tls_transport(g_parsed.transport) && !clock_ready()) {
+    if (millis() - g_clock_log_ms >= 15000) {
+      g_clock_log_ms = millis();
+      logger_printf("MQTT aguardando o horario da internet para conferir o certificado\r\n");
+    }
     return;
   }
   if (millis() - g_last_try_ms < kRetryMs) {

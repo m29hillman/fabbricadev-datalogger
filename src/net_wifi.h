@@ -6,6 +6,7 @@ void net_begin();
 void net_service();
 void net_apply();
 void net_request_apply();
+void net_apply_clock();
 bool net_sta_connected();
 bool net_ap_up();
 int net_rssi();

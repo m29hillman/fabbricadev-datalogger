@@ -17,6 +17,8 @@ struct Settings {
   bool mqtt_on;
   char mqtt_url[180];
   uint16_t mqtt_every_s;
+  char ntp_server[64];
+  int8_t ntp_gmt;
   char modelo[32];
 };
 
@@ -28,6 +30,7 @@ const char *settings_save_network(const char *ssid, const char *wpass, bool dhcp
                                   const char *mask, const char *gw, const char *dns,
                                   const char *hostname);
 const char *settings_save_mqtt(bool enabled, const char *url, uint16_t every_s);
+const char *settings_save_ntp(const char *server, int gmt);
 const char *settings_save_model(const char *id);
 const char *settings_change_password(const char *atual, const char *nova);
 void settings_reset_password();
