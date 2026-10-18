@@ -9,6 +9,7 @@
 #define TELNET_MAX_CLIENTS 2
 #define WEB_PORT 80
 #define MQTT_TOPIC_DEFAULT "fabbricadev/inversor"
+#define MQTT_PUBLISH_DEFAULT_S 10
 
 // RS485 isolado da Waveshare ESP32-S3-RS485-CAN.
 // DE em HIGH transmite; em LOW recebe. DE e /RE estao unidos no GPIO21.

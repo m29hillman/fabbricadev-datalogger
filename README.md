@@ -22,25 +22,27 @@ Este firmware só lê. Não envia funções de escrita (06 e 16).
 1. Grave o firmware (veja abaixo).
 2. No celular ou no computador, entre na rede Wi-Fi aberta `fabbricadev-datalogger`.
 3. Abra `http://192.168.4.1`. Usuário e senha iniciais: `admin` / `admin`.
-4. Na aba Rede, salve o Wi-Fi da casa. Na aba MQTT, se quiser, habilite o broker.
+4. Na aba Rede, salve o nome da placa e o Wi-Fi da casa. Na aba MQTT, se quiser, habilite o broker.
 5. Troque a senha da página na aba Usuário.
 
-Quando a placa entra na rede da casa, a rede aberta desliga cerca de 2 segundos depois. Se o Wi-Fi cair, a rede aberta volta. O hostname no DHCP e no mDNS é `fabbricadev-datalogger`, então a página também responde em `http://fabbricadev-datalogger.local` depois de conectada.
+Quando a placa entra na rede da casa, a rede aberta some cerca de 2 segundos depois. Se ficar um minuto sem conseguir conectar, a rede aberta volta com o nome da placa e a tentativa na rede da casa continua. O nome padrão é `fabbricadev-datalogger`. Com a placa conectada, a página também responde em `http://fabbricadev-datalogger.local`.
 
-Cinco senhas erradas seguidas bloqueiam o login por 5 minutos. O comando `resetar-senha` no console volta o login para `admin` / `admin`. A opção Restaurar padrão na página também apaga a rede, o MQTT e devolve o modelo Sungrow SG6K-D. A configuração fica na memória da placa (NVS).
+Cinco senhas erradas seguidas bloqueiam o login por 5 minutos. O comando `resetar-senha` no console volta o login para `admin` / `admin`. A opção Restaurar padrão na página também apaga a rede e o MQTT, devolve o nome `fabbricadev-datalogger` e o modelo Sungrow SG6K-D. A configuração fica na memória da placa (NVS).
 
 ## Página e MQTT
 
-A aba Estatística mostra potência, energia, tensões e correntes lidas do mapa Sungrow (protocolo de string inverters). O mesmo conteúdo sai no MQTT a cada 10 segundos, com a mensagem retida, no tópico `fabbricadev/inversor` se a URL não tiver caminho.
+A aba Estatística mostra potência, energia, tensões e correntes lidas do mapa Sungrow (protocolo de string inverters). O mesmo conteúdo sai no MQTT, com a mensagem retida, no tópico `fabbricadev/inversor` se a URL não tiver caminho. O intervalo fica na aba MQTT e o padrão é 10 segundos.
 
 Formato da URL:
 
 ```text
 mqtt://usuario:senha@192.168.1.10:1883/fabbricadev/inversor
 mqtts://usuario:senha@broker.exemplo:8883/fabbricadev/inversor
+ws://usuario:senha@192.168.1.10:8083/mqtt/fabbricadev/inversor
+wss://usuario:senha@broker.exemplo:443/mqtt/fabbricadev/inversor
 ```
 
-`mqtt://` usa a porta 1883. `mqtts://` usa 8883. Usuário e senha são opcionais. O caminho depois do host é o tópico.
+`mqtt://` usa a porta 1883 e `mqtts://` a 8883. O caminho depois do host é o tópico. `ws://` usa a porta 80 e `wss://` a 443. Nessas duas, a primeira pasta é o caminho do WebSocket (em geral `mqtt`) e o restante é o tópico. Usuário e senha são opcionais.
 
 Exemplo do JSON:
 

@@ -1,5 +1,6 @@
 #include "settings.h"
 
+#include "config.h"
 #include "inverter_model.h"
 #include "logger.h"
 #include "secrets.h"
@@ -37,6 +38,7 @@ void persist() {
   }
   g_prefs.putString("user", g_settings.user);
   g_prefs.putString("upass", g_settings.upass);
+  g_prefs.putString("host", g_settings.hostname);
   g_prefs.putString("ssid", g_settings.ssid);
   g_prefs.putString("wpass", g_settings.wpass);
   g_prefs.putBool("dhcp", g_settings.dhcp);
@@ -44,8 +46,10 @@ void persist() {
   g_prefs.putString("mask", g_settings.mask);
   g_prefs.putString("gw", g_settings.gw);
   g_prefs.putString("dns", g_settings.dns);
+  g_prefs.putString("host", g_settings.hostname);
   g_prefs.putBool("mqtt_on", g_settings.mqtt_on);
   g_prefs.putString("mqtt_url", g_settings.mqtt_url);
+  g_prefs.putUShort("mqtt_s", g_settings.mqtt_every_s);
   g_prefs.putString("modelo", g_settings.modelo);
 }
 
@@ -56,6 +60,8 @@ void settings_begin() {
   clip(g_settings.user, sizeof(g_settings.user), "admin");
   clip(g_settings.upass, sizeof(g_settings.upass), "admin");
   clip(g_settings.modelo, sizeof(g_settings.modelo), "sungrow-sg6k-d");
+  clip(g_settings.hostname, sizeof(g_settings.hostname), WIFI_HOSTNAME);
+  g_settings.mqtt_every_s = MQTT_PUBLISH_DEFAULT_S;
   g_settings.dhcp = true;
 
   g_ready = g_prefs.begin("casa", false);
@@ -86,25 +92,29 @@ void settings_begin() {
   if (!g_prefs.isKey("modelo")) {
     g_prefs.putString("modelo", "sungrow-sg6k-d");
   }
+  if (!g_prefs.isKey("host")) {
+    g_prefs.putString("host", WIFI_HOSTNAME);
+  }
 
   load_string("user", g_settings.user, sizeof(g_settings.user), "admin");
   load_string("upass", g_settings.upass, sizeof(g_settings.upass), "admin");
   load_string("ssid", g_settings.ssid, sizeof(g_settings.ssid), "");
   load_string("wpass", g_settings.wpass, sizeof(g_settings.wpass), "");
-  if (strcmp(g_settings.ssid, "Piemont Office") == 0) {
-    clip(g_settings.ssid, sizeof(g_settings.ssid), "");
-    clip(g_settings.wpass, sizeof(g_settings.wpass), "");
-    g_prefs.putString("ssid", "");
-    g_prefs.putString("wpass", "");
-    logger_printf("Rede padrao removida. Configure o Wi-Fi pela pagina.\r\n");
-  }
   g_settings.dhcp = g_prefs.getBool("dhcp", true);
   load_string("ip", g_settings.ip, sizeof(g_settings.ip), "");
   load_string("mask", g_settings.mask, sizeof(g_settings.mask), "");
   load_string("gw", g_settings.gw, sizeof(g_settings.gw), "");
   load_string("dns", g_settings.dns, sizeof(g_settings.dns), "");
+  load_string("host", g_settings.hostname, sizeof(g_settings.hostname), WIFI_HOSTNAME);
+  if (g_settings.hostname[0] == '\0') {
+    clip(g_settings.hostname, sizeof(g_settings.hostname), WIFI_HOSTNAME);
+  }
   g_settings.mqtt_on = g_prefs.getBool("mqtt_on", false);
   load_string("mqtt_url", g_settings.mqtt_url, sizeof(g_settings.mqtt_url), "");
+  g_settings.mqtt_every_s = g_prefs.getUShort("mqtt_s", MQTT_PUBLISH_DEFAULT_S);
+  if (g_settings.mqtt_every_s < 1 || g_settings.mqtt_every_s > 3600) {
+    g_settings.mqtt_every_s = MQTT_PUBLISH_DEFAULT_S;
+  }
   load_string("modelo", g_settings.modelo, sizeof(g_settings.modelo), "sungrow-sg6k-d");
   if (inverter_model_find(g_settings.modelo) == nullptr) {
     clip(g_settings.modelo, sizeof(g_settings.modelo), "sungrow-sg6k-d");
@@ -124,13 +134,38 @@ bool settings_is_default_password() {
   return strcmp(g_settings.user, "admin") == 0 && strcmp(g_settings.upass, "admin") == 0;
 }
 
+bool hostname_chars(const char *name) {
+  if (name == nullptr || name[0] == '\0' || name[0] == '-' || strlen(name) > 32) {
+    return false;
+  }
+  for (const char *p = name; *p != '\0'; ++p) {
+    char c = *p;
+    bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+    if (!ok) {
+      return false;
+    }
+  }
+  return name[strlen(name) - 1] != '-';
+}
+
 const char *settings_save_network(const char *ssid, const char *wpass, bool dhcp, const char *ip,
-                                  const char *mask, const char *gw, const char *dns) {
+                                  const char *mask, const char *gw, const char *dns,
+                                  const char *hostname) {
   if (ssid == nullptr) {
     ssid = "";
   }
   if (strlen(ssid) > 32) {
     return "SSID longo demais";
+  }
+  char host[33];
+  clip(host, sizeof(host), hostname);
+  for (char *p = host; *p != '\0'; ++p) {
+    if (*p >= 'A' && *p <= 'Z') {
+      *p = static_cast<char>(*p - 'A' + 'a');
+    }
+  }
+  if (!hostname_chars(host)) {
+    return "Nome invalido. Use letras, numeros e hifen";
   }
   if (ssid[0] != '\0' && strcmp(ssid, g_settings.ssid) != 0 && (wpass == nullptr || wpass[0] == '\0')) {
     return "Informe a senha da nova rede";
@@ -157,11 +192,12 @@ const char *settings_save_network(const char *ssid, const char *wpass, bool dhcp
   clip(g_settings.mask, sizeof(g_settings.mask), mask);
   clip(g_settings.gw, sizeof(g_settings.gw), gw);
   clip(g_settings.dns, sizeof(g_settings.dns), dns != nullptr && dns[0] != '\0' ? dns : gw);
+  clip(g_settings.hostname, sizeof(g_settings.hostname), host);
   persist();
   return nullptr;
 }
 
-const char *settings_save_mqtt(bool enabled, const char *url) {
+const char *settings_save_mqtt(bool enabled, const char *url, uint16_t every_s) {
   if (url == nullptr) {
     url = "";
   }
@@ -171,8 +207,12 @@ const char *settings_save_mqtt(bool enabled, const char *url) {
   if (enabled && url[0] == '\0') {
     return "Informe a URL do broker";
   }
+  if (every_s < 1 || every_s > 3600) {
+    return "Intervalo de 1 a 3600 segundos";
+  }
   g_settings.mqtt_on = enabled;
   clip(g_settings.mqtt_url, sizeof(g_settings.mqtt_url), url);
+  g_settings.mqtt_every_s = every_s;
   persist();
   return nullptr;
 }
@@ -219,6 +259,8 @@ const char *settings_factory_reset(const char *senha) {
   g_settings.dns[0] = '\0';
   g_settings.mqtt_on = false;
   g_settings.mqtt_url[0] = '\0';
+  g_settings.mqtt_every_s = MQTT_PUBLISH_DEFAULT_S;
+  clip(g_settings.hostname, sizeof(g_settings.hostname), WIFI_HOSTNAME);
   clip(g_settings.modelo, sizeof(g_settings.modelo), "sungrow-sg6k-d");
   persist();
   return nullptr;

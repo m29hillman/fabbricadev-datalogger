@@ -87,9 +87,9 @@ void print_help() {
 }
 
 void print_status() {
-  logger_printf("hostname %s\r\n", WIFI_HOSTNAME);
+  logger_printf("hostname %s\r\n", settings_get().hostname);
   if (net_ap_up()) {
-    logger_printf("pagina http://%s  rede aberta %s\r\n", WIFI_AP_IP, WIFI_AP_SSID);
+    logger_printf("pagina http://%s  rede aberta %s\r\n", WIFI_AP_IP, settings_get().hostname);
   } else {
     logger_printf("rede aberta desligada\r\n");
   }
@@ -112,7 +112,8 @@ void print_status() {
 }
 
 void print_banner() {
-  logger_printf("\r\nESP32-S3-RS485-CAN  hostname %s\r\n", WIFI_HOSTNAME);
+  const Settings &cfg = settings_get();
+  logger_printf("\r\nESP32-S3-RS485-CAN  hostname %s\r\n", cfg.hostname);
   logger_printf("RS485 UART1 TX=%d RX=%d DE=%d (HIGH transmite)  %lu 8N1  escravo %u\r\n",
                 RS485_TX_PIN, RS485_RX_PIN, RS485_DE_PIN,
                 static_cast<unsigned long>(MODBUS_BAUD_DEFAULT), g_slave);
@@ -122,7 +123,12 @@ void print_banner() {
   logger_printf("Nao use o par do medidor de energia, se o conector tiver os dois.\r\n");
   logger_printf("O inversor e escravo: fica em silencio ate receber uma consulta.\r\n");
   logger_printf("Modo inicial: varredura. O quadro cru sai no USB e no telnet %d.\r\n", TELNET_PORT);
-  logger_printf("Rede aberta sem senha: %s\r\n", WIFI_AP_SSID);
+  if (cfg.ssid[0] == '\0') {
+    logger_printf("Rede aberta sem senha: %s\r\n", cfg.hostname);
+  } else {
+    logger_printf("Conectando na rede %s\r\n", cfg.ssid);
+    logger_printf("Sem conexao por 1 minuto, a rede aberta %s volta.\r\n", cfg.hostname);
+  }
   logger_printf("Pagina http://%s  usuario admin  senha admin\r\n", WIFI_AP_IP);
   logger_printf("Digite ajuda.\r\n");
 }

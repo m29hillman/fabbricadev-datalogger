@@ -1,10 +1,12 @@
 #pragma once
 
 #include <stdbool.h>
+#include <stdint.h>
 
 struct Settings {
   char user[32];
   char upass[64];
+  char hostname[33];
   char ssid[33];
   char wpass[65];
   bool dhcp;
@@ -14,6 +16,7 @@ struct Settings {
   char dns[16];
   bool mqtt_on;
   char mqtt_url[180];
+  uint16_t mqtt_every_s;
   char modelo[32];
 };
 
@@ -22,8 +25,9 @@ const Settings &settings_get();
 bool settings_check_login(const char *user, const char *pass);
 bool settings_is_default_password();
 const char *settings_save_network(const char *ssid, const char *wpass, bool dhcp, const char *ip,
-                                  const char *mask, const char *gw, const char *dns);
-const char *settings_save_mqtt(bool enabled, const char *url);
+                                  const char *mask, const char *gw, const char *dns,
+                                  const char *hostname);
+const char *settings_save_mqtt(bool enabled, const char *url, uint16_t every_s);
 const char *settings_save_model(const char *id);
 const char *settings_change_password(const char *atual, const char *nova);
 void settings_reset_password();

@@ -145,6 +145,9 @@ nav button.on { background:var(--card); border-color:var(--line); }
 </section>
 <section id="rede" hidden>
 <form id="frede" class="card">
+<label for="hostname">Nome na rede</label>
+<input id="hostname" maxlength="32" autocomplete="off" spellcheck="false">
+<p class="muted">Nome desta placa no DHCP, em http://nome.local e na rede aberta de configuração. Letras, números e hífen.</p>
 <label for="ssid">SSID</label>
 <div class="row">
 <input id="ssid" maxlength="32" autocomplete="off">
@@ -172,8 +175,12 @@ nav button.on { background:var(--card); border-color:var(--line); }
 <form id="fmqtt" class="card">
 <label><input type="checkbox" id="mqtt_on"> Habilitar envio</label>
 <label for="mqtt_url">URL do broker</label>
-<input id="mqtt_url" type="text" placeholder="mqtt://usuario:senha@192.168.1.10:1883/esp32-casa-1/inversor">
-<p class="muted">O caminho depois da porta é o tópico. Sem caminho, o tópico é esp32-casa-1/inversor. A cada 10 s a placa publica o JSON do inversor.</p>
+<input id="mqtt_url" type="text" placeholder="mqtt://usuario:senha@192.168.1.10:1883/fabbricadev/inversor">
+<p class="muted">TCP: mqtt:// e mqtts://. O caminho é o tópico. Sem caminho, o tópico é fabbricadev/inversor.</p>
+<p class="muted">WebSocket: ws:// e wss://. A primeira pasta é o caminho do socket e o resto é o tópico. Ex.: ws://usuario:senha@192.168.1.10:8083/mqtt/fabbricadev/inversor</p>
+<label for="mqtt_every">Intervalo (segundos)</label>
+<input id="mqtt_every" type="number" min="1" max="3600" value="10">
+<p class="muted">De 1 a 3600. A placa publica o JSON do inversor nesse intervalo.</p>
 <p class="muted" id="mqttinfo"></p>
 <p class="err" id="merr"></p>
 <button type="submit">Salvar MQTT</button>
@@ -192,7 +199,7 @@ nav button.on { background:var(--card); border-color:var(--line); }
 <button type="submit">Trocar senha</button>
 </form>
 <div class="card">
-<p>Restaura o usuário e a senha para admin, apaga a rede e o MQTT, e volta o modelo para Sungrow SG6K-D.</p>
+<p>Restaura o usuário e a senha para admin, apaga a rede e o MQTT, volta o nome para fabbricadev-datalogger e o modelo para Sungrow SG6K-D.</p>
 <button class="perigo" type="button" id="resetabrir">Restaurar padrão</button>
 <form id="freset" hidden>
 <label for="resetsenha">Senha atual</label>
@@ -288,6 +295,7 @@ async function carregarModelo() {
 async function carregarRede() {
   const r = await fetch('/api/rede');
   const j = await r.json();
+  document.getElementById('hostname').value = j.hostname || '';
   document.getElementById('ssid').value = j.ssid || '';
   document.getElementById('ip').value = j.ip || '';
   document.getElementById('mask').value = j.mask || '';
@@ -302,6 +310,7 @@ async function carregarMqtt() {
   const j = await r.json();
   document.getElementById('mqtt_on').checked = !!j.habilitado;
   document.getElementById('mqtt_url').value = j.url || '';
+  document.getElementById('mqtt_every').value = j.intervalo || 10;
   document.getElementById('mqttinfo').textContent = (j.conectado ? 'Conectado' : 'Desconectado') + ' · topico ' + (j.topico || '');
 }
 document.querySelectorAll('input[name=ipmodo]').forEach(el => {
@@ -358,6 +367,7 @@ document.getElementById('frede').onsubmit = async (ev) => {
   const modo = document.querySelector('input[name=ipmodo]:checked').value;
   try {
     await post('/api/rede', {
+      hostname:document.getElementById('hostname').value,
       ssid:document.getElementById('ssid').value,
       wpass:document.getElementById('wpass').value,
       dhcp: modo === 'dhcp' ? '1' : '0',
@@ -377,7 +387,8 @@ document.getElementById('fmqtt').onsubmit = async (ev) => {
   try {
     await post('/api/mqtt', {
       habilitado: document.getElementById('mqtt_on').checked ? '1' : '0',
-      url: document.getElementById('mqtt_url').value
+      url: document.getElementById('mqtt_url').value,
+      intervalo: document.getElementById('mqtt_every').value
     });
     document.getElementById('merr').textContent = 'MQTT salvo.';
     setTimeout(carregarMqtt, 2000);
@@ -638,17 +649,19 @@ void handle_net_get() {
   char gw[24];
   char dns[24];
   char sta[48];
+  char host[80];
   json_escape(cfg.ssid, ssid, sizeof(ssid));
+  json_escape(cfg.hostname, host, sizeof(host));
   json_escape(cfg.ip, ip, sizeof(ip));
   json_escape(cfg.mask, mask, sizeof(mask));
   json_escape(cfg.gw, gw, sizeof(gw));
   json_escape(cfg.dns, dns, sizeof(dns));
   json_escape(net_sta_ip().c_str(), sta, sizeof(sta));
-  char body[420];
+  char body[640];
   snprintf(body, sizeof(body),
-           "{\"ssid\":\"%s\",\"dhcp\":%s,\"ip\":\"%s\",\"mask\":\"%s\",\"gw\":\"%s\",\"dns\":\"%s\","
+           "{\"ssid\":\"%s\",\"hostname\":\"%s\",\"dhcp\":%s,\"ip\":\"%s\",\"mask\":\"%s\",\"gw\":\"%s\",\"dns\":\"%s\","
            "\"conectado\":%s,\"ip_sta\":\"%s\",\"rssi\":%d,\"ap\":\"%s\"}",
-           ssid, cfg.dhcp ? "true" : "false", ip, mask, gw, dns,
+           ssid, host, cfg.dhcp ? "true" : "false", ip, mask, gw, dns,
            net_sta_connected() ? "true" : "false", sta, net_rssi(), WIFI_AP_IP);
   send_json(200, body);
 }
@@ -659,7 +672,7 @@ void handle_net_post() {
   }
   const char *err = settings_save_network(field("ssid").c_str(), g_server.arg("wpass").c_str(),
                                           field("dhcp") != "0", field("ip").c_str(), field("mask").c_str(),
-                                          field("gw").c_str(), field("dns").c_str());
+                                          field("gw").c_str(), field("dns").c_str(), field("hostname").c_str());
   if (err != nullptr) {
     char escaped[80];
     char body[120];
@@ -668,9 +681,10 @@ void handle_net_post() {
     send_json(400, body);
     return;
   }
-  logger_printf("Rede salva ssid %s %s\r\n", settings_get().ssid,
-                settings_get().dhcp ? "dinamico" : "fixo");
+  logger_printf("Rede salva ssid %s %s hostname %s\r\n", settings_get().ssid,
+                settings_get().dhcp ? "dinamico" : "fixo", settings_get().hostname);
   send_json(200, "{\"ok\":true}");
+  mqtt_reconfigure();
   net_request_apply();
 }
 
@@ -683,9 +697,11 @@ void handle_mqtt_get() {
   char topic[120];
   json_escape(cfg.mqtt_url, url, sizeof(url));
   json_escape(mqtt_topic(), topic, sizeof(topic));
-  char body[560];
-  snprintf(body, sizeof(body), "{\"habilitado\":%s,\"url\":\"%s\",\"conectado\":%s,\"topico\":\"%s\"}",
-           cfg.mqtt_on ? "true" : "false", url, mqtt_connected() ? "true" : "false", topic);
+  char body[640];
+  snprintf(body, sizeof(body),
+           "{\"habilitado\":%s,\"url\":\"%s\",\"intervalo\":%u,\"conectado\":%s,\"topico\":\"%s\"}",
+           cfg.mqtt_on ? "true" : "false", url, cfg.mqtt_every_s, mqtt_connected() ? "true" : "false",
+           topic);
   send_json(200, body);
 }
 
@@ -695,11 +711,26 @@ void handle_mqtt_post() {
   }
   bool enabled = field("habilitado") == "1";
   String url = field("url");
-  if (url.length() > 0 && !mqtt_url_valid(url.c_str())) {
-    send_json(400, "{\"erro\":\"URL invalida. Use mqtt://host:1883/topico\"}");
+  String every_text = field("intervalo");
+  uint32_t every = 0;
+  bool every_ok = every_text.length() > 0 && every_text.length() <= 4;
+  for (unsigned i = 0; every_ok && i < every_text.length(); ++i) {
+    char c = every_text[i];
+    if (c < '0' || c > '9') {
+      every_ok = false;
+    } else {
+      every = every * 10U + static_cast<uint32_t>(c - '0');
+    }
+  }
+  if (!every_ok || every < 1 || every > 3600) {
+    send_json(400, "{\"erro\":\"Intervalo de 1 a 3600 segundos\"}");
     return;
   }
-  const char *err = settings_save_mqtt(enabled, url.c_str());
+  if (url.length() > 0 && !mqtt_url_valid(url.c_str())) {
+    send_json(400, "{\"erro\":\"URL invalida. Use mqtt://, mqtts://, ws:// ou wss://\"}");
+    return;
+  }
+  const char *err = settings_save_mqtt(enabled, url.c_str(), static_cast<uint16_t>(every));
   if (err != nullptr) {
     char escaped[80];
     char body[120];
